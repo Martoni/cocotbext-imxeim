@@ -18,3 +18,12 @@ Import it :
 from cocotbext.imxeim.driver import EIMMaster
 from cocotbext.imxeim.driver import EIMOp
 ```
+
+TODO
+
+# Related projects
+
+These projects use cocotbext-imxeim :
+
+- [ChisArmadeus](https://github.com/Martoni/ChisArmadeus): Armadeus imx
+	interface wrappers written in Chisel HDL.
