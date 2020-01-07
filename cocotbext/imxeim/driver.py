@@ -186,17 +186,14 @@ class EIMMaster(EIM):
         count = 0
         clkedge = RisingEdge(self.clock)
         while self.busy:
-            ack, reply = self._get_reply()
-            # valid reply?
-            if ack:
-                datrd = self.bus.datrd.value
+            if count >= 4: # XXX parametrize
+                datrd = self.bus.daout.value
                 #append reply and meta info to result buffer
-                tmpRes =  EIMRes(ack=reply, sel=None, adr=None, datrd=datrd, datwr=None, waitIdle=None, waitStall=None, waitAck=self._clk_cycle_count)               
+                tmpRes =  EIMRes(sel=None, adr=None, datrd=datrd, datwr=None, waitIdle=None, waitStall=None, waitAck=self._clk_cycle_count)               
                 self._res_buf.append(tmpRes)
                 self._acked_ops += 1
             yield clkedge
             count += 1
-
 
     @coroutine
     def _drive(self, we, adr, datwr, sel, idle):
@@ -212,18 +209,20 @@ class EIMMaster(EIM):
                 while idlecnt > 0:
                     idlecnt -= 1
                     yield clkedge
-            # drive outputs    
-            self.bus.stb    <= 1
-            self.bus.adr    <= adr
-            if hasattr(self.bus, "sel"):
-                self.bus.sel <= sel if sel is not None else BinaryValue("1" * len(self.bus.sel))
-            self.bus.datwr  <= datwr
-            self.bus.we     <= we
+            # set address
+            self.bus.lba <= 0
+            self.bus.dain <= adr
+            yield clkedge
+            self.bus.lba <= 1
+            # drive outputs   
+            self.bus.cs  <= 0
+            self.bus.dain <= datwr
+            self.bus.rw   <= we
             yield clkedge
             #append operation and meta info to auxiliary buffer
-            self._aux_buf.append(EIMAux(sel, adr, datwr, stalled, idle, self._clk_cycle_count))
-            yield self._wait_ack()
-            self.bus.we     <= 0
+            self._aux_buf.append(EIMAux(sel, adr, datwr, idle, self._clk_cycle_count))
+#XXX            yield self._wait_ack()
+            self.bus.rw <= 0
         else:
             self.log.error("Cannot drive the EIM bus outside a cycle!")
 
