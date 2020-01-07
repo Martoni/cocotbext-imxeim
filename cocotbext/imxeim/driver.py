@@ -51,9 +51,9 @@ class EIMOp():
         dat: data to write, None indicates a read cycle
         idle: number of clock cycles between asserting cyc and stb
         sel: the selection mask for the operation
-        acktimeout: number of maximum clock cycles before asserting ack
+        acktimeout: number of clock cycles before asserting ack
     """
-    def __init__(self, adr=0, dat=None, idle=0, sel=None, acktimeout=0):
+    def __init__(self, adr=0, dat=None, idle=0, sel=None, acktimeout=4):
         self.adr    = adr
         self.dat    = dat
         self.sel    = sel
@@ -84,8 +84,9 @@ class EIM(BusDriver):
     """
     EIM
     """
-    _signals = ["cyc", "stb", "we", "adr", "datwr", "datrd", "ack"]
-    _optional_signals = ["sel", "err", "stall", "rty"]
+
+    _signals = ["dain", "daout", "daen", "lba", "rw", "cs"]
+    _optional_signals = ["eb", "oe"]
 
 
     def __init__(self, entity, name, clock, width=32, signals_dict=None, **kwargs):
@@ -94,23 +95,17 @@ class EIM(BusDriver):
         BusDriver.__init__(self, entity, name, clock, **kwargs)
         # Drive some sensible defaults (setimmediatevalue to avoid x asserts)
         self._width = width
-        self.bus.cyc.setimmediatevalue(0)
-        self.bus.stb.setimmediatevalue(0)
-        self.bus.we.setimmediatevalue(0)
-        self.bus.adr.setimmediatevalue(0)
-        self.bus.datwr.setimmediatevalue(0)
-
-        if hasattr(self.bus, "sel"):
-            v = self.bus.sel.value
-            v.binstr = "1" * len(self.bus.sel)
-            self.bus.sel <= v
+        self.bus.dain.setimmediatevalue(0)
+        self.bus.lba.setimmediatevalue(1)
+        self.bus.rw.setimmediatevalue(0)
+        self.bus.cs.setimmediatevalue(1)
 
 
 class EIMMaster(EIM):
     """
     EIM master
     """
-    def __init__(self, entity, name, clock, timeout=None, width=32, **kwargs):
+    def __init__(self, entity, name, clock, timeout=None, width=16, **kwargs):
         sTo = ", no cycle timeout"
         if timeout is not None:
             sTo = ", cycle timeout is %u clockcycles" % timeout
@@ -148,7 +143,8 @@ class EIMMaster(EIM):
         self.busy       = True
         cocotb.fork(self._read())
         cocotb.fork(self._clk_cycle_counter()) 
-        self.bus.cyc    <= 1
+        #self.bus.cyc    <= 1
+        self.bus.lba <= 0
         self._acked_ops = 0  
         self._res_buf   = [] 
         self._aux_buf   = []
@@ -177,73 +173,9 @@ class EIMMaster(EIM):
 
         self.busy = False
         self.busy_event.set()
-        self.bus.cyc <= 0 
+        self.bus.cs <= 1
         self.log.debug("Closing cycle")
         yield clkedge
-
-
-    @coroutine
-    def _wait_stall(self):
-        """Wait for stall to be low before continuing (Pipelined EIM)
-        """
-        clkedge = RisingEdge(self.clock)
-        count = 0
-        if hasattr(self.bus, "stall"):
-            count = 0            
-            while self.bus.stall.value == 1:
-                yield clkedge
-                count += 1
-                if (not (self._timeout is None)):
-                    if (count > self._timeout): 
-                        raise TestFailure("Timeout of %u clock cycles reached when on stall from slave" % self._timeout)                
-            self.log.debug("Stalled for %u cycles" % count)
-        raise ReturnValue(count)
-
-
-    @coroutine
-    def _wait_ack(self):
-        """Wait for ACK on the bus before continuing (Non pipelined EIM)
-        """
-        #wait for acknownledgement before continuing - Classic EIM without pipelining
-        clkedge = RisingEdge(self.clock)
-        count = 0
-        if hasattr(self.bus, "stall"):
-            self.bus.stb    <= 0
-        if self._acktimeout == 0:
-            while not self._get_reply()[0] :
-                yield clkedge
-                count += 1
-        else:
-            while (not self._get_reply()[0]) and (count < self._acktimeout) :
-                yield clkedge
-                count += 1
-        if (self._acktimeout != 0) and (count >= self._acktimeout):
-            raise TestFailure("Timeout of %u clock cycles reached when waiting for acknowledge" % count)
-
-        if not hasattr(self.bus, "stall"):
-            self.bus.stb    <= 0
-        self._acked_ops += 1
-        self.log.debug("Waited %u cycles for ackknowledge" % count)
-
-        raise ReturnValue(count)    
-
-
-    def _get_reply(self):
-        code = 0 # 0 if no reply, 1 for ACK, 2 for ERR, 3 for RTY
-        ack = self.bus.ack.value == 1
-        if ack:
-            code = 1
-        if hasattr(self.bus, "err") and self.bus.err.value == 1:
-            if ack:
-                raise TestFailure("Slave raised ACK and ERR line")
-            ack = True
-            code = 2
-        if hasattr(self.bus, "rty") and self.bus.rty.value == 1:
-            if ack:
-                raise TestFailure("Slave raised {} and RTY line".format("ACK" if code == 1 else "ERR"))
-            ack = True
-            code = 3
-        return ack, code
 
 
     @coroutine 
@@ -288,8 +220,6 @@ class EIMMaster(EIM):
             self.bus.datwr  <= datwr
             self.bus.we     <= we
             yield clkedge
-            #deal with flow control (pipelined eim)
-            stalled = yield self._wait_stall()
             #append operation and meta info to auxiliary buffer
             self._aux_buf.append(EIMAux(sel, adr, datwr, stalled, idle, self._clk_cycle_count))
             yield self._wait_ack()
