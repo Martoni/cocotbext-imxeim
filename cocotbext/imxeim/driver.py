@@ -53,7 +53,7 @@ class EIMOp():
         adr: address of the operation
         dat: data to write, None indicates a read cycle
         idle: number of clock cycles between request
-        wsc: wait state control
+        wsc: wait state control (default 4)
     """
     def __init__(self, adr=0, dat=None, wsc=4, idle=0):
         self.adr  = adr
@@ -197,22 +197,19 @@ class EIMMaster(EIM):
         """
         Reader for slave replies
         """
-        count = 0
         clkedge = RisingEdge(self.clock)
         while self.busy:
-            if count >= 4: # XXX parametrize
-                datrd = self.bus.daout.value
-                #append reply and meta info to result buffer
-                tmpRes =  EIMRes(adr=None,
-                                 datrd=datrd,
-                                 datwr=None,
-                                 waitIdle=None,
-                                 waitStall=None,
-                                 waitAck=self._clk_cycle_count)
-                self._res_buf.append(tmpRes)
-                self._acked_ops += 1
+            datrd = self.bus.daout.value
+            #append reply and meta info to result buffer
+            tmpRes =  EIMRes(adr=None,
+                             datrd=datrd,
+                             datwr=None,
+                             waitIdle=None,
+                             waitStall=None,
+                             waitAck=self._clk_cycle_count)
+            self._res_buf.append(tmpRes)
+            self._acked_ops += 1
             yield clkedge
-            count += 1
 
     @coroutine
     def _drive(self, we, adr, datwr, wsc, idle):
@@ -245,6 +242,7 @@ class EIMMaster(EIM):
                     EIMAux(adr, datwr, idle, self._clk_cycle_count))
 #XXX            yield self._wait_ack()
             self.bus.rw <= 0
+            self.bus.cs  <= 1
         else:
             self.log.error("Cannot drive the EIM bus outside a cycle!")
 
