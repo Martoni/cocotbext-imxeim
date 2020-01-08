@@ -9,7 +9,6 @@
 """ driver
 """
 
-
 import cocotb
 from cocotb.decorators import coroutine
 from cocotb.triggers import RisingEdge, Event
@@ -30,7 +29,13 @@ class EIMAux():
 
     wrap meta informations on bus transaction (internal only)
     """
-    def __init__(self, sel=None, adr=0, datwr=None, waitStall=0, waitIdle=0, tsStb=0):
+    def __init__(self,
+                 sel=None,
+                 adr=0,
+                 datwr=None,
+                 waitStall=0,
+                 waitIdle=0,
+                 tsStb=0):
         self.sel        = sel
         self.adr        = adr
         self.datwr      = datwr
@@ -68,7 +73,14 @@ class EIMRes():
     What's happend on the bus plus meta information on timing
     """
 
-    def __init__(self, ack=0, sel=None, adr=0, datrd=None, datwr=None, waitIdle=0, waitStall=0, waitAck=0):
+    def __init__(self, ack=0,
+                       sel=None,
+                       adr=0,
+                       datrd=None,
+                       datwr=None,
+                       waitIdle=0,
+                       waitStall=0,
+                       waitAck=0):
         self.ack        = ack
         self.sel        = sel
         self.adr        = adr
@@ -89,7 +101,8 @@ class EIM(BusDriver):
     _optional_signals = ["eb", "oe"]
 
 
-    def __init__(self, entity, name, clock, width=32, signals_dict=None, **kwargs):
+    def __init__(self, entity, name, clock, width=32, signals_dict=None,
+                 **kwargs):
         if signals_dict is not None:
             self._signals=signals_dict
         BusDriver.__init__(self, entity, name, clock, **kwargs)
@@ -137,7 +150,8 @@ class EIMMaster(EIM):
     def _open_cycle(self):
         #Open new eim cycle
         if self.busy:
-            self.log.error("Opening Cycle, but EIM Driver is already busy. Someting's wrong")
+            self.log.error("Opening Cycle, but EIM Driver is already busy." +
+                           "Someting's wrong")
             yield self.busy_event.wait()
         self.busy_event.clear()
         self.busy       = True
@@ -157,18 +171,24 @@ class EIMMaster(EIM):
         clkedge = RisingEdge(self.clock)
         count           = 0
         last_acked_ops  = 0
-        #Wait for all Operations being acknowledged by the slave before lowering the cycle line
-        #This is not mandatory by the bus standard, but a crossbar might send acks to the wrong master
-        #if we don't wait. We don't want to risk that, it could hang the bus
+        #Wait for all Operations being acknowledged by the slave before
+        #lowering the cycle line.
+        #This is not mandatory by the bus standard, but a crossbar might
+        #send acks to the wrong master if we don't wait.
+        #We don't want to risk that, it could hang the bus
         while self._acked_ops < self._op_cnt:
             if last_acked_ops != self._acked_ops:
-                self.log.debug("Waiting for missing acks: %u/%u" % (self._acked_ops, self._op_cnt) )
+                self.log.debug("Waiting for missing acks: %u/%u"
+                        % (self._acked_ops, self._op_cnt) )
             last_acked_ops = self._acked_ops    
             #check for timeout when finishing the cycle            
             count += 1
             if (not (self._timeout is None)):
                 if (count > self._timeout): 
-                    raise TestFailure("Timeout of %u clock cycles reached when waiting for reply from slave" % self._timeout)                
+                    raise TestFailure(
+                            "Timeout of %u clock cycles "%self._timeout + 
+                            "reached when waiting for reply from " +
+                            "slave")
             yield clkedge
 
         self.busy = False
@@ -189,7 +209,13 @@ class EIMMaster(EIM):
             if count >= 4: # XXX parametrize
                 datrd = self.bus.daout.value
                 #append reply and meta info to result buffer
-                tmpRes =  EIMRes(sel=None, adr=None, datrd=datrd, datwr=None, waitIdle=None, waitStall=None, waitAck=self._clk_cycle_count)               
+                tmpRes =  EIMRes(sel=None,
+                                 adr=None,
+                                 datrd=datrd,
+                                 datwr=None,
+                                 waitIdle=None,
+                                 waitStall=None,
+                                 waitAck=self._clk_cycle_count)               
                 self._res_buf.append(tmpRes)
                 self._acked_ops += 1
             yield clkedge
@@ -220,7 +246,8 @@ class EIMMaster(EIM):
             self.bus.rw   <= we
             yield clkedge
             #append operation and meta info to auxiliary buffer
-            self._aux_buf.append(EIMAux(sel, adr, datwr, idle, self._clk_cycle_count))
+            self._aux_buf.append(
+                    EIMAux(sel, adr, datwr, idle, self._clk_cycle_count))
 #XXX            yield self._wait_ack()
             self.bus.rw <= 0
         else:
@@ -249,7 +276,8 @@ class EIMMaster(EIM):
 
                 for op in arg:
                     if not isinstance(op, EIMOp):
-                        raise TestFailure("Sorry, argument must be a list of EIMOp (EIM Operation) objects!")    
+                        raise TestFailure("Sorry, argument must be a list " +
+                                          "of EIMOp (EIM Operation) objects!")    
 
                     self._acktimeout = op.acktimeout
 
@@ -261,14 +289,21 @@ class EIMMaster(EIM):
                         dat = 0
                     yield self._drive(we, op.adr, dat, op.sel, op.idle)
                     if op.sel is not None:
-                        self.log.debug("#%3u WE: %s ADR: 0x%08x DAT: 0x%08x SEL: 0x%1x IDLE: %3u" % (cnt, we, op.adr, dat, op.sel, op.idle))
+                        self.log.debug(
+                                "#%3u WE: %s ADR: 0x%08x " % (cnt, we, op.adr) +
+                                "DAT: 0x%08x SEL: 0x%1x " % (dat, op.sel) +
+                                "IDLE: %3u" % op.idle)
                     else:
-                        self.log.debug("#%3u WE: %s ADR: 0x%08x DAT: 0x%08x SEL: None  IDLE: %3u" % (cnt, we, op.adr, dat, op.idle))
+                        self.log.debug(
+                                "#%3u WE: %s ADR: 0x%08x " % (cnt, we, op.adr) +
+                                "DAT: 0x%08x SEL: None  " % dat +
+                                "IDLE: %3u" % op.idle)
                     cnt += 1
 
                 yield self._close_cycle()
 
-                #do pick and mix from result- and auxiliary buffer so we get all operation and meta info
+                #do pick and mix from result- 
+                #and auxiliary buffer so we get all operation and meta info
                 for res, aux in zip(self._res_buf, self._aux_buf):
                     res.datwr       = aux.datwr
                     res.sel         = aux.sel
@@ -280,7 +315,6 @@ class EIMMaster(EIM):
 
             raise ReturnValue(result)
         else:
-            raise TestFailure("Sorry, argument must be a list of EIMOp (EIM Operation) objects!")
+            raise TestFailure("Sorry, argument must be a list of EIMOp " +
+                              "(EIM Operation) objects!")
             raise ReturnValue(None)
-
-
