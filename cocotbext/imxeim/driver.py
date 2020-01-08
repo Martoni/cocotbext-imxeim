@@ -30,13 +30,11 @@ class EIMAux():
     wrap meta informations on bus transaction (internal only)
     """
     def __init__(self,
-                 sel=None,
                  adr=0,
                  datwr=None,
                  waitStall=0,
                  waitIdle=0,
                  tsStb=0):
-        self.sel        = sel
         self.adr        = adr
         self.datwr      = datwr
         self.waitIdle   = waitIdle
@@ -54,16 +52,14 @@ class EIMOp():
     Args:
         adr: address of the operation
         dat: data to write, None indicates a read cycle
-        idle: number of clock cycles between asserting cyc and stb
-        sel: the selection mask for the operation
-        acktimeout: number of clock cycles before asserting ack
+        idle: number of clock cycles between request
+        wsc: wait state control
     """
-    def __init__(self, adr=0, dat=None, idle=0, sel=None, acktimeout=4):
-        self.adr    = adr
-        self.dat    = dat
-        self.sel    = sel
-        self.idle   = idle
-        self.acktimeout = acktimeout
+    def __init__(self, adr=0, dat=None, wsc=4, idle=0):
+        self.adr  = adr
+        self.dat  = dat
+        self.idle = idle
+        self.wsc = wsc
 
 @public
 class EIMRes():
@@ -74,7 +70,6 @@ class EIMRes():
     """
 
     def __init__(self, ack=0,
-                       sel=None,
                        adr=0,
                        datrd=None,
                        datwr=None,
@@ -82,7 +77,6 @@ class EIMRes():
                        waitStall=0,
                        waitAck=0):
         self.ack        = ack
-        self.sel        = sel
         self.adr        = adr
         self.datrd      = datrd
         self.datwr      = datwr
@@ -134,7 +128,7 @@ class EIMMaster(EIM):
         self.log.info("EIM Master created%s" % sTo)
 
 
-    @coroutine 
+    @coroutine
     def _clk_cycle_counter(self):
         """
         Cycle counter to time bus operations
@@ -156,18 +150,17 @@ class EIMMaster(EIM):
         self.busy_event.clear()
         self.busy       = True
         cocotb.fork(self._read())
-        cocotb.fork(self._clk_cycle_counter()) 
+        cocotb.fork(self._clk_cycle_counter())
         #self.bus.cyc    <= 1
-        self.bus.lba <= 0
-        self._acked_ops = 0  
-        self._res_buf   = [] 
+        self._acked_ops = 0
+        self._res_buf   = []
         self._aux_buf   = []
         self.log.debug("Opening cycle, %u Ops" % self._op_cnt)
 
 
     @coroutine
     def _close_cycle(self):
-        #Close current eim cycle  
+        #Close current eim cycle
         clkedge = RisingEdge(self.clock)
         count           = 0
         last_acked_ops  = 0
@@ -180,25 +173,26 @@ class EIMMaster(EIM):
             if last_acked_ops != self._acked_ops:
                 self.log.debug("Waiting for missing acks: %u/%u"
                         % (self._acked_ops, self._op_cnt) )
-            last_acked_ops = self._acked_ops    
-            #check for timeout when finishing the cycle            
+            last_acked_ops = self._acked_ops
+            #check for timeout when finishing the cycle
             count += 1
             if (not (self._timeout is None)):
-                if (count > self._timeout): 
+                if (count > self._timeout):
                     raise TestFailure(
-                            "Timeout of %u clock cycles "%self._timeout + 
+                            "Timeout of %u clock cycles "%self._timeout +
                             "reached when waiting for reply from " +
                             "slave")
             yield clkedge
 
         self.busy = False
         self.busy_event.set()
+        self.bus.lba <= 1
         self.bus.cs <= 1
         self.log.debug("Closing cycle")
         yield clkedge
 
 
-    @coroutine 
+    @coroutine
     def _read(self):
         """
         Reader for slave replies
@@ -209,20 +203,19 @@ class EIMMaster(EIM):
             if count >= 4: # XXX parametrize
                 datrd = self.bus.daout.value
                 #append reply and meta info to result buffer
-                tmpRes =  EIMRes(sel=None,
-                                 adr=None,
+                tmpRes =  EIMRes(adr=None,
                                  datrd=datrd,
                                  datwr=None,
                                  waitIdle=None,
                                  waitStall=None,
-                                 waitAck=self._clk_cycle_count)               
+                                 waitAck=self._clk_cycle_count)
                 self._res_buf.append(tmpRes)
                 self._acked_ops += 1
             yield clkedge
             count += 1
 
     @coroutine
-    def _drive(self, we, adr, datwr, sel, idle):
+    def _drive(self, we, adr, datwr, wsc, idle):
         """
         Drive the EIM Master Out Lines
         """
@@ -240,14 +233,16 @@ class EIMMaster(EIM):
             self.bus.dain <= adr
             yield clkedge
             self.bus.lba <= 1
-            # drive outputs   
+            # drive outputs
             self.bus.cs  <= 0
             self.bus.dain <= datwr
             self.bus.rw   <= we
             yield clkedge
+            for i in range(wsc):
+                yield clkedge
             #append operation and meta info to auxiliary buffer
             self._aux_buf.append(
-                    EIMAux(sel, adr, datwr, idle, self._clk_cycle_count))
+                    EIMAux(adr, datwr, idle, self._clk_cycle_count))
 #XXX            yield self._wait_ack()
             self.bus.rw <= 0
         else:
@@ -277,9 +272,7 @@ class EIMMaster(EIM):
                 for op in arg:
                     if not isinstance(op, EIMOp):
                         raise TestFailure("Sorry, argument must be a list " +
-                                          "of EIMOp (EIM Operation) objects!")    
-
-                    self._acktimeout = op.acktimeout
+                                          "of EIMOp (EIM Operation) objects.")
 
                     if op.dat is not None:
                         we  = 1
@@ -287,26 +280,19 @@ class EIMMaster(EIM):
                     else:
                         we  = 0
                         dat = 0
-                    yield self._drive(we, op.adr, dat, op.sel, op.idle)
-                    if op.sel is not None:
-                        self.log.debug(
-                                "#%3u WE: %s ADR: 0x%08x " % (cnt, we, op.adr) +
-                                "DAT: 0x%08x SEL: 0x%1x " % (dat, op.sel) +
-                                "IDLE: %3u" % op.idle)
-                    else:
-                        self.log.debug(
-                                "#%3u WE: %s ADR: 0x%08x " % (cnt, we, op.adr) +
-                                "DAT: 0x%08x SEL: None  " % dat +
-                                "IDLE: %3u" % op.idle)
+                    yield self._drive(we, op.adr, dat, op.wsc, op.idle)
+                    self.log.debug(
+                            "#%3u WE: %s ADR: 0x%08x " % (cnt, we, op.adr) +
+                            "DAT: 0x%08x " % dat +
+                            "IDLE: %3u" % op.idle)
                     cnt += 1
 
                 yield self._close_cycle()
 
-                #do pick and mix from result- 
+                #do pick and mix from result-
                 #and auxiliary buffer so we get all operation and meta info
                 for res, aux in zip(self._res_buf, self._aux_buf):
                     res.datwr       = aux.datwr
-                    res.sel         = aux.sel
                     res.adr         = aux.adr
                     res.waitIdle    = aux.waitIdle
                     res.waitStall   = aux.waitStall
